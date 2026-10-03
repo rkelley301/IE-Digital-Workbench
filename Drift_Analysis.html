@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drift Analysis | I&E Digital Workbench</title>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --card-bg: #1e1e1e;
+            --text-primary: #e0e0e0;
+            --text-secondary: #a0a0a0;
+            --accent: #4caf50;
+            --accent-hover: #45a049;
+            --border: #333333;
+            --pass-bg: #1c3b1c;
+            --pass-text: #81c784;
+            --fail-bg: #3b1c1c;
+            --fail-text: #ef5350;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            margin: 0;
+            padding: 2rem 1rem;
+            line-height: 1.6;
+        }
+        .container { max-width: 900px; margin: 0 auto; }
+        header {
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 1rem;
+            margin-bottom: 2rem;
+        }
+        h1 { margin: 0; font-size: 1.8rem; letter-spacing: -0.5px; }
+        .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 0.5rem; }
+
+        .card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+        }
+        label {
+            display: block;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 0.4rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        textarea {
+            width: 100%;
+            min-height: 240px;
+            resize: vertical;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.75rem;
+            font-family: "Consolas", "SFMono-Regular", Menlo, monospace;
+            font-size: 0.95rem;
+            line-height: 1.5;
+            transition: border-color 0.2s;
+        }
+        textarea:focus { outline: none; border-color: var(--accent); }
+        textarea::placeholder { color: #666666; }
+        .hint { color: var(--text-secondary); font-size: 0.85rem; margin: 0.6rem 0 0; }
+        code {
+            font-family: "Consolas", "SFMono-Regular", Menlo, monospace;
+            color: var(--text-primary);
+            background-color: var(--bg-color);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 0.05rem 0.35rem;
+            font-size: 0.85em;
+        }
+
+        .summary {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem 1.5rem;
+            margin: 2rem 0 0.75rem;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+        .summary b { color: var(--text-primary); font-family: "Consolas", "SFMono-Regular", Menlo, monospace; }
+        .summary .fail b { color: var(--fail-text); }
+        .summary .pass b { color: var(--pass-text); }
+
+        .table-wrap {
+            overflow-x: auto;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+        table { width: 100%; border-collapse: collapse; min-width: 520px; }
+        th, td { padding: 0.65rem 0.9rem; text-align: left; white-space: nowrap; }
+        th {
+            background-color: var(--card-bg);
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--border);
+        }
+        td { border-top: 1px solid var(--bg-color); }
+        td.num { font-family: "Consolas", "SFMono-Regular", Menlo, monospace; text-align: right; }
+        th.num { text-align: right; }
+        td.tag { font-weight: 600; }
+        td.status { font-weight: 700; font-size: 0.8rem; letter-spacing: 0.5px; }
+        tr.pass { background-color: var(--pass-bg); color: var(--pass-text); }
+        tr.fail { background-color: var(--fail-bg); color: var(--fail-text); }
+        /* The value(s) that broke tolerance. */
+        td.over { text-decoration: underline; text-underline-offset: 3px; font-weight: 700; }
+        .empty {
+            padding: 2rem 1rem;
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        footer { text-align: center; margin-top: 2rem; font-size: 0.85rem; }
+        footer a { color: var(--text-secondary); text-decoration: none; }
+        footer a:hover { color: var(--accent); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Drift Analysis</h1>
+            <div class="subtitle">Paste calibration results to flag instruments whose as-found or as-left error exceeds tolerance.</div>
+        </header>
+
+        <div class="card">
+            <label for="csv">CSV Data</label>
+            <textarea id="csv" spellcheck="false" placeholder="Tag,As_Found_Error,As_Left_Error,Tolerance
+FT-101,0.12,0.03,0.25
+PT-204,-0.41,0.05,0.25
+TT-310,0.20,-0.02,0.50"></textarea>
+            <p class="hint">One instrument per line: <code>Tag,As_Found_Error,As_Left_Error,Tolerance</code>. A header row, blank lines, and rows that don't parse are skipped.</p>
+        </div>
+
+        <div class="summary" id="summary" aria-live="polite"></div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th scope="col">Tag</th>
+                        <th scope="col" class="num">As Found</th>
+                        <th scope="col" class="num">As Left</th>
+                        <th scope="col" class="num">Tolerance</th>
+                        <th scope="col">Status</th>
+                    </tr>
+                </thead>
+                <tbody id="results"></tbody>
+            </table>
+            <div class="empty" id="empty">No valid rows yet. Paste CSV data above.</div>
+        </div>
+
+        <footer>
+            <a href="index.html">&larr; Back to Workbench</a>
+        </footer>
+    </div>
+
+    <script>
+        const csvEl = document.getElementById('csv');
+        const resultsEl = document.getElementById('results');
+        const emptyEl = document.getElementById('empty');
+        const summaryEl = document.getElementById('summary');
+
+        // Splits one CSV line, honouring double-quoted fields ("a,b" and "" escapes).
+        function splitCsvLine(line) {
+            const out = [];
+            let field = '', quoted = false;
+            for (let i = 0; i < line.length; i++) {
+                const ch = line[i];
+                if (quoted) {
+                    if (ch === '"' && line[i + 1] === '"') { field += '"'; i++; }
+                    else if (ch === '"') quoted = false;
+                    else field += ch;
+                } else if (ch === '"') quoted = true;
+                else if (ch === ',') { out.push(field); field = ''; }
+                else field += ch;
+            }
+            out.push(field);
+            return out.map(f => f.trim());
+        }
+
+        // Strict number: "0.5" ok; "", "abc", "0.5%" rejected rather than half-read.
+        function toNumber(text) {
+            if (text === '') return NaN;
+            return Number(text);
+        }
+
+        // Returns a row object, or null for anything that should be skipped.
+        function parseRow(line) {
+            if (!line.trim()) return null;
+            const cells = splitCsvLine(line);
+            if (cells.length < 4) return null;
+            const [tag, foundText, leftText, tolText] = cells;
+            const found = toNumber(foundText), left = toNumber(leftText), tol = toNumber(tolText);
+            if (!tag || ![found, left, tol].every(Number.isFinite) || tol < 0) return null;
+            const foundOver = Math.abs(found) > tol;
+            const leftOver = Math.abs(left) > tol;
+            return { tag, foundText, leftText, tolText, foundOver, leftOver, fail: foundOver || leftOver };
+        }
+
+        function cell(text, className) {
+            const td = document.createElement('td');
+            td.textContent = text;
+            if (className) td.className = className;
+            return td;
+        }
+
+        function stat(label, value, className) {
+            const span = document.createElement('span');
+            if (className) span.className = className;
+            const b = document.createElement('b');
+            b.textContent = value;
+            span.append(label + ' ', b);
+            return span;
+        }
+
+        function render() {
+            const lines = csvEl.value.split(/\r?\n/);
+            const nonBlank = lines.filter(l => l.trim()).length;
+            const rows = lines.map(parseRow).filter(Boolean);
+            const failed = rows.filter(r => r.fail).length;
+
+            resultsEl.replaceChildren(...rows.map(r => {
+                const tr = document.createElement('tr');
+                tr.className = r.fail ? 'fail' : 'pass';
+                tr.append(
+                    cell(r.tag, 'tag'),
+                    cell(r.foundText, 'num' + (r.foundOver ? ' over' : '')),
+                    cell(r.leftText, 'num' + (r.leftOver ? ' over' : '')),
+                    cell('±' + r.tolText.replace(/^[+-]/, ''), 'num'),
+                    cell(r.fail ? 'OUT OF TOLERANCE' : 'IN TOLERANCE', 'status')
+                );
+                return tr;
+            }));
+            emptyEl.hidden = rows.length > 0;
+
+            const skipped = nonBlank - rows.length;
+            summaryEl.replaceChildren();
+            if (rows.length) {
+                summaryEl.append(
+                    stat('Instruments', rows.length),
+                    stat('In tolerance', rows.length - failed, 'pass'),
+                    stat('Out of tolerance', failed, 'fail')
+                );
+            }
+            // Header row counts as skipped; only mention it if something else was dropped too.
+            const header = lines.find(l => l.trim());
+            const headerSkipped = header && !parseRow(header) && /[a-z]/i.test(splitCsvLine(header)[1] || '') ? 1 : 0;
+            if (skipped - headerSkipped > 0) summaryEl.append(stat('Skipped lines', skipped - headerSkipped));
+        }
+
+        csvEl.addEventListener('input', render);
+        render();
+    </script>
+</body>
+</html>

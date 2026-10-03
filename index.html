@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>I&E Digital Workbench</title>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --card-bg: #1e1e1e;
+            --text-primary: #e0e0e0;
+            --text-secondary: #a0a0a0;
+            --accent: #4caf50;
+            --accent-hover: #45a049;
+            --border: #333333;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            margin: 0;
+            padding: 2rem;
+            line-height: 1.6;
+        }
+        header {
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 1rem;
+            margin-bottom: 2rem;
+        }
+        h1 { margin: 0; font-size: 1.8rem; letter-spacing: -0.5px; }
+        .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 0.5rem; }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1.5rem;
+        }
+        .card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+            transition: transform 0.2s, border-color 0.2s;
+            text-decoration: none;
+            color: inherit;
+            display: block;
+        }
+        .card:hover {
+            transform: translateY(-2px);
+            border-color: var(--accent);
+        }
+        .card h3 { margin-top: 0; margin-bottom: 0.5rem; font-size: 1.1rem; }
+        .card p { color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 1rem; }
+        .badge {
+            display: inline-block;
+            background-color: #333;
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .badge.active { background-color: rgba(76, 175, 80, 0.2); color: var(--accent); }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>I&E Digital Workbench</h1>
+        <div class="subtitle">Centralized instrumentation, electrical, and documentation tools.</div>
+    </header>
+
+    <div class="grid">
+        <!-- Tool 1 -->
+        <a href="4-20mA_Calc.html" class="card">
+            <h3>4-20mA Calculator</h3>
+            <p>Convert engineering units to mA and vice versa. Includes live calculation.</p>
+            <span class="badge">In Progress</span>
+        </a>
+
+        <!-- Tool 2 -->
+        <a href="LoopCheck_SOP.html" class="card">
+            <h3>Loop Check SOP</h3>
+            <p>Interactive, step-by-step procedure generator for field loop verification.</p>
+            <span class="badge active">Active</span>
+        </a>
+
+        <!-- Tool 3 -->
+        <a href="#" class="card">
+            <h3>Control Valve Sizing</h3>
+            <p>Quick reference and calculation tool for Cv and flow characteristics.</p>
+            <span class="badge">Planned</span>
+        </a>
+
+        <!-- Tool 4 -->
+        <a href="Drift_Analysis.html" class="card">
+            <h3>Drift Analysis</h3>
+            <p>Paste CSV calibration data to flag instruments out of tolerance.</p>
+            <span class="badge active">Active</span>
+        </a>
+
+        <!-- Add New Tool Template -->
+        <a href="#" class="card" style="border-style: dashed; opacity: 0.7;">
+            <h3>+ Add New Tool</h3>
+            <p>Clone this card in index.html to add your next build.</p>
+            <span class="badge">Template</span>
+        </a>
+    </div>
+
+</body>
+</html>

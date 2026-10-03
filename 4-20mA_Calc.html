@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>4-20mA Calculator | I&E Digital Workbench</title>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --card-bg: #1e1e1e;
+            --text-primary: #e0e0e0;
+            --text-secondary: #a0a0a0;
+            --accent: #4caf50;
+            --accent-hover: #45a049;
+            --border: #333333;
+            --warning: #ffb300;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            margin: 0;
+            padding: 2rem 1rem;
+            line-height: 1.6;
+        }
+        .container { max-width: 600px; margin: 0 auto; }
+        header {
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 1rem;
+            margin-bottom: 2rem;
+        }
+        h1 { margin: 0; font-size: 1.8rem; letter-spacing: -0.5px; }
+        .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 0.5rem; }
+
+        .card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+        }
+        .field { margin-bottom: 1.25rem; }
+        label {
+            display: block;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 0.4rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        input[type="number"] {
+            width: 100%;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.75rem;
+            font-size: 1.1rem;
+            font-family: inherit;
+            transition: border-color 0.2s;
+        }
+        input[type="number"]:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .results {
+            border-top: 1px solid var(--border);
+            margin-top: 0.5rem;
+            padding-top: 1.25rem;
+        }
+        .result-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: 0.6rem 0;
+        }
+        .result-label { color: var(--text-secondary); font-size: 0.9rem; }
+        .result-value {
+            font-family: "Consolas", "SFMono-Regular", Menlo, monospace;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--accent);
+        }
+        .result-value.muted { color: var(--text-secondary); }
+        .ma-group { display: flex; align-items: center; gap: 0.75rem; }
+
+        button {
+            background-color: var(--accent);
+            color: #121212;
+            border: none;
+            border-radius: 6px;
+            padding: 0.5rem 0.9rem;
+            font-size: 0.85rem;
+            font-weight: 700;
+            cursor: pointer;
+            min-width: 90px;
+            transition: background-color 0.2s;
+        }
+        button:hover:not(:disabled) { background-color: var(--accent-hover); }
+        button:disabled { background-color: #333; color: var(--text-secondary); cursor: not-allowed; }
+
+        .warning {
+            display: none;
+            margin-top: 1rem;
+            padding: 0.75rem 1rem;
+            border: 1px solid var(--warning);
+            border-radius: 6px;
+            background-color: rgba(255, 179, 0, 0.1);
+            color: var(--warning);
+            font-size: 0.9rem;
+        }
+        .warning.show { display: block; }
+
+        footer { text-align: center; margin-top: 2rem; font-size: 0.85rem; }
+        footer a { color: var(--text-secondary); text-decoration: none; }
+        footer a:hover { color: var(--accent); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>4-20mA Calculator</h1>
+            <div class="subtitle">Convert an engineering-unit value to percent of span and loop current.</div>
+        </header>
+
+        <div class="card">
+            <div class="field">
+                <label for="low">Range Low (EU)</label>
+                <input type="number" id="low" step="any" value="0">
+            </div>
+            <div class="field">
+                <label for="high">Range High (EU)</label>
+                <input type="number" id="high" step="any" value="100">
+            </div>
+            <div class="field">
+                <label for="target">Target Value (EU)</label>
+                <input type="number" id="target" step="any" placeholder="Enter value">
+            </div>
+
+            <div class="results">
+                <div class="result-row">
+                    <span class="result-label">Percentage of Span</span>
+                    <span class="result-value muted" id="pct">--</span>
+                </div>
+                <div class="result-row">
+                    <span class="result-label">4-20mA Output</span>
+                    <div class="ma-group">
+                        <span class="result-value muted" id="ma">--</span>
+                        <button id="copyBtn" disabled>Copy mA</button>
+                    </div>
+                </div>
+                <div class="warning" id="warning"></div>
+            </div>
+        </div>
+
+        <footer>
+            <a href="index.html">&larr; Back to Workbench</a>
+        </footer>
+    </div>
+
+    <script>
+        const lowEl = document.getElementById('low');
+        const highEl = document.getElementById('high');
+        const targetEl = document.getElementById('target');
+        const pctEl = document.getElementById('pct');
+        const maEl = document.getElementById('ma');
+        const copyBtn = document.getElementById('copyBtn');
+        const warningEl = document.getElementById('warning');
+        let currentMa = null;
+
+        function showResult(pctText, maText, ok) {
+            pctEl.textContent = pctText;
+            maEl.textContent = maText;
+            pctEl.classList.toggle('muted', !ok);
+            maEl.classList.toggle('muted', !ok);
+            copyBtn.disabled = !ok;
+        }
+
+        function setWarning(msg) {
+            warningEl.textContent = msg || '';
+            warningEl.classList.toggle('show', Boolean(msg));
+        }
+
+        function calculate() {
+            currentMa = null;
+            const low = parseFloat(lowEl.value);
+            const high = parseFloat(highEl.value);
+            const target = parseFloat(targetEl.value);
+
+            if ([low, high, target].some(Number.isNaN)) {
+                setWarning('');
+                showResult('--', '--', false);
+                return;
+            }
+            if (high === low) {
+                setWarning('Range Low and Range High cannot be equal (zero span).');
+                showResult('--', '--', false);
+                return;
+            }
+
+            const pct = ((target - low) / (high - low)) * 100;
+            const ma = (pct / 100) * 16 + 4;
+            currentMa = ma.toFixed(3);
+
+            setWarning(pct < 0 || pct > 100
+                ? 'Target is outside the calibrated range (' + pct.toFixed(2) + '% of span).'
+                : '');
+            showResult(pct.toFixed(2) + ' %', currentMa + ' mA', true);
+        }
+
+        function flashButton(text) {
+            copyBtn.textContent = text;
+            setTimeout(() => { copyBtn.textContent = 'Copy mA'; }, 1500);
+        }
+
+        function fallbackCopy(text) {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            let ok = false;
+            try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+            document.body.removeChild(ta);
+            return ok;
+        }
+
+        copyBtn.addEventListener('click', () => {
+            if (currentMa === null) return;
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(currentMa)
+                    .then(() => flashButton('Copied!'))
+                    .catch(() => flashButton(fallbackCopy(currentMa) ? 'Copied!' : 'Failed'));
+            } else {
+                flashButton(fallbackCopy(currentMa) ? 'Copied!' : 'Failed');
+            }
+        });
+
+        [lowEl, highEl, targetEl].forEach(el => el.addEventListener('input', calculate));
+        calculate();
+    </script>
+</body>
+</html>
