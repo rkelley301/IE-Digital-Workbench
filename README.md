@@ -12,6 +12,16 @@ A centralized suite of instrumentation tools built for field technicians and eng
 
 `index.html` is the launcher: a card grid that links to each tool and shows its status.
 
+## SpecLoop Academy (separate app)
+
+[`specloop/`](specloop/README.md) is a voice-first study app for I&C technicians: narrated lessons, recall quizzes, field scenarios, and spaced review. Unlike the single-file tools, it's a Next.js + TypeScript project with a build step:
+
+```bash
+cd specloop && npm install && npm run dev
+```
+
+It runs locally without API keys. See [specloop/README.md](specloop/README.md) for setup, integrations, and limitations.
+
 ## Tech Stack
 
 - **Pure HTML, CSS, and JavaScript** — no frameworks, no build step.
