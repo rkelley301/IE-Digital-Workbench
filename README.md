@@ -10,8 +10,6 @@ A centralized suite of instrumentation tools built for field technicians and eng
 | **Loop Check SOP** | `LoopCheck_SOP.html` | Generates an interactive, step-by-step procedure for field loop verification. |
 | **Drift Analysis** | `Drift_Analysis.html` | Takes pasted CSV calibration data and flags instruments that are out of tolerance. |
 
-| **TSTI / JSA Permit Drafter** | `safety-permit-pwa/` | Offline PWA for drafting PTW, TSTI/JSA, and permit closure with Morris site rules enforced. Has a build step; see its README. |
-
 `index.html` is the launcher: a card grid that links to each tool and shows its status.
 
 ## Tech Stack
