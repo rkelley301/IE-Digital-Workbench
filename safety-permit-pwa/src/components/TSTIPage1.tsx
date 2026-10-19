@@ -1,21 +1,30 @@
-import { useLiveQuery } from 'dexie-react-hooks'
 import { useEffect, useState, type ReactNode } from 'react'
 import { addStep, deleteControl, deleteStep, deleteStepHazard, isLocked, patchRecord } from '../db/repo'
-import type { Control, ControlLevel, Hazard, HazardCategory, JsaStep, StepHazard } from '../db/types'
+import type { Control, ControlLevel, Hazard, JsaStep, StepHazard, Tsti } from '../db/types'
+import {
+  COMMENTS_LABEL,
+  HAZARD_RECOGNITION,
+  HAZARD_RECOGNITION_HEADING,
+  JSA_HEADERS,
+  LEADER_Q10,
+  LEADER_QUESTIONS,
+  LEADER_QUESTIONS_HEADING,
+  RECOGNITION_ITEMS,
+  STOP_WORK_CONDITIONS,
+  TASK_PLANNING_FIELDS,
+  TSTI1_TITLE,
+  recognitionLabel,
+  type RecognitionGroup,
+  type RecognitionKey,
+} from '../forms/templates'
 import { addCustomHazard, addLibraryHazard, addManualControl, applyMandates, moveStepHazard } from '../logic/safetyEngine'
-import { loadBundle, validateTstiPage1, type PermitBundle } from '../logic/validation'
+import { validateTstiPage1, type PermitBundle } from '../logic/validation'
 import { FormShell } from './FormShell'
-import { Button, CommitTextArea, IssueList, Label, LockBadge, inputClass } from './ui'
+import { useAction, usePermitBundle, type Run } from './hooks'
+import { Button, CheckGroup, ChoiceRow, CommitTextArea, DateField, IssueList, Label, LockBadge, Section, TextField, inputClass } from './ui'
+import { YES_NO, toggle } from './formUtils'
 
-const CATEGORIES: { value: HazardCategory; label: string }[] = [
-  { value: 'gravity', label: 'Gravity' },
-  { value: 'pressure', label: 'Pressure' },
-  { value: 'temperature', label: 'Temperature' },
-  { value: 'chemical', label: 'Chemical' },
-  { value: 'electrical', label: 'Electrical' },
-  { value: 'mechanical', label: 'Mechanical' },
-  { value: 'noise', label: 'Noise' },
-]
+const GROUPS = Object.entries(HAZARD_RECOGNITION) as [RecognitionGroup, (typeof HAZARD_RECOGNITION)[RecognitionGroup]][]
 
 const LEVELS: { value: ControlLevel; label: string; short: string }[] = [
   { value: 'engineering', label: 'Engineering', short: 'ENG' },
@@ -26,19 +35,8 @@ const LEVELS: { value: ControlLevel; label: string; short: string }[] = [
 const lockLabel = (item: { source: string; sourceRef?: string }) =>
   item.source === 'site_rule' ? `Required · ${item.sourceRef}` : 'Required · hazard'
 
-/** Run an action and surface any error (e.g. LockedItemError) to the technician. */
-function useAction() {
-  const [error, setError] = useState<string | null>(null)
-  const run = (fn: () => Promise<unknown>) => {
-    setError(null)
-    fn().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-  }
-  return { error, run, clear: () => setError(null) }
-}
-
 export function TSTIPage1({ permitId, onNext }: { permitId: string; onNext?: () => void }) {
-  // null = not found; undefined = still loading
-  const bundle = useLiveQuery(async () => (await loadBundle(permitId)) ?? null, [permitId])
+  const bundle = usePermitBundle(permitId)
   const tstiId = bundle?.tsti.id
   const conditionsKey = bundle?.permit.workConditions.join(',')
   const action = useAction()
@@ -53,9 +51,15 @@ export function TSTIPage1({ permitId, onNext }: { permitId: string; onNext?: () 
 
   const issues = validateTstiPage1(bundle)
   const { tsti, steps } = bundle
+  const editable = bundle.permit.status === 'draft'
+  const save = (changes: Partial<Tsti>) => action.run(() => patchRecord('tsti', tsti.id, changes))
+
+  // Recognition boxes the JSA hazards require, for highlighting.
+  const required = new Map<string, string>()
+  for (const h of bundle.stepHazards) for (const k of h.recognitionKeys) if (!required.has(k)) required.set(k, `Required by JSA: ${h.description}`)
 
   return (
-    <FormShell title="TSTI Page 1" subtitle={`Task Safety · Permit ${bundle.permit.permitNumber || '(no number)'}`}>
+    <FormShell title="TSTI Page 1" subtitle={TSTI1_TITLE}>
       {action.error && (
         <div role="alert" className="flex items-center justify-between gap-3 rounded-lg border-2 border-field-stop bg-black p-3 text-lg font-bold text-field-stop">
           {action.error}
@@ -63,19 +67,28 @@ export function TSTIPage1({ permitId, onNext }: { permitId: string; onNext?: () 
         </div>
       )}
 
-      <section>
-        <Label htmlFor="job-description">Job description</Label>
-        <CommitTextArea
-          id="job-description"
-          rows={3}
-          value={tsti.jobDescription}
-          placeholder="What is the job? Equipment, location, scope."
-          onCommit={(v) => action.run(() => patchRecord('tsti', tsti.id, { jobDescription: v }))}
-        />
-      </section>
+      <fieldset disabled={!editable} className="space-y-6">
+      <Section title="Task Planning">
+        <DateField label="Date" value={tsti.date} onChange={(date) => save({ date })} />
+        {TASK_PLANNING_FIELDS.map((f) => (
+          <TextField
+            key={f.key}
+            label={f.label}
+            multiline={f.key === 'jobDescription' || f.key === 'knownHazards' || f.key === 'evacuationRoute'}
+            value={tsti.planning[f.key]}
+            placeholder={f.key === 'woPermitNumber' ? bundle.permit.permitNumber : undefined}
+            onCommit={(v) => save({ planning: { ...tsti.planning, [f.key]: v } })}
+          />
+        ))}
+      </Section>
+
+      <Section title="Stop Work Conditions (Reminders)">
+        <CheckGroup items={STOP_WORK_CONDITIONS} selected={tsti.stopWorkConditions} onToggle={(k, on) => save({ stopWorkConditions: toggle(tsti.stopWorkConditions, k, on) })} />
+      </Section>
 
       <section className="space-y-4">
-        <h2 className="text-xl font-black uppercase">Task steps · hazards · controls</h2>
+        <h2 className="text-xl font-black uppercase">JSA</h2>
+        <p className="text-sm font-bold uppercase text-neutral-300">{JSA_HEADERS.join(' · ')}</p>
         {steps.map((step) => (
           <StepCard key={step.id} step={step} bundle={bundle} run={action.run} />
         ))}
@@ -84,7 +97,42 @@ export function TSTIPage1({ permitId, onNext }: { permitId: string; onNext?: () 
         </Button>
       </section>
 
-      <IssueList title="Page 1" issues={issues} />
+      <Section title={COMMENTS_LABEL}>
+        <CommitTextArea ariaLabel={COMMENTS_LABEL} rows={3} value={tsti.comments} onCommit={(comments) => save({ comments })} />
+      </Section>
+
+      <Section title={HAZARD_RECOGNITION_HEADING}>
+        {GROUPS.map(([group, g]) => (
+          <CheckGroup
+            key={group}
+            title={g.label}
+            items={g.items}
+            selected={tsti.hazardRecognition}
+            flagged={required}
+            onToggle={(k, on) => save({ hazardRecognition: toggle<RecognitionKey>(tsti.hazardRecognition, k, on) })}
+          />
+        ))}
+        {tsti.hazardRecognition.includes('env_other') && (
+          <TextField label="Environmental: Other" value={tsti.envOther} onCommit={(envOther) => save({ envOther })} />
+        )}
+      </Section>
+
+      <Section title={LEADER_QUESTIONS_HEADING}>
+        {LEADER_QUESTIONS.map((q) => (
+          <ChoiceRow
+            key={q.key}
+            label={q.label}
+            value={tsti.leaderAnswers[q.key]}
+            options={YES_NO}
+            disabled={!editable}
+            onChange={(v) => save({ leaderAnswers: { ...tsti.leaderAnswers, [q.key]: v } })}
+          />
+        ))}
+        <TextField label={LEADER_Q10} multiline value={tsti.leaderQ10} onCommit={(leaderQ10) => save({ leaderQ10 })} />
+      </Section>
+      </fieldset>
+
+      <IssueList title="TSTI Page 1" issues={issues} />
 
       {onNext && (
         <Button variant="primary" className="w-full text-lg" onClick={onNext}>
@@ -94,8 +142,6 @@ export function TSTIPage1({ permitId, onNext }: { permitId: string; onNext?: () 
     </FormShell>
   )
 }
-
-type Run = (fn: () => Promise<unknown>) => void
 
 function StepCard({ step, bundle, run }: { step: JsaStep; bundle: PermitBundle; run: Run }) {
   const hazards = bundle.stepHazards
@@ -137,14 +183,17 @@ function HazardRow({ hazard, step, bundle, run }: { hazard: StepHazard; step: Js
   const locked = isLocked(hazard)
   const controls = bundle.controls.filter((c) => c.stepHazardId === hazard.id)
   const ref = hazard.hazardCode ? bundle.hazards.find((x) => x.code === hazard.hazardCode) : undefined
-  const category = CATEGORIES.find((c) => c.value === hazard.category)?.label
 
   return (
     <div className={`rounded-lg border-2 p-3 ${locked ? 'border-field-warn' : 'border-field-line'} bg-black`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded bg-neutral-700 px-2 py-0.5 text-xs font-bold uppercase">{category}</span>
+            {hazard.recognitionKeys.map((k) => (
+              <span key={k} className="rounded bg-neutral-700 px-2 py-0.5 text-xs font-bold uppercase">
+                {recognitionLabel(k)}
+              </span>
+            ))}
             {locked && <LockBadge label={lockLabel(hazard)} />}
           </div>
           <p className="mt-1 text-lg font-bold">{hazard.description}</p>
@@ -259,7 +308,7 @@ function AddControl({ tstiId, stepHazardId, run }: { tstiId: string; stepHazardI
 function AddHazard({ tstiId, stepId, library, run }: { tstiId: string; stepId: string; library: Hazard[]; run: Run }) {
   const [mode, setMode] = useState<'closed' | 'library' | 'custom'>('closed')
   const [code, setCode] = useState('')
-  const [category, setCategory] = useState<HazardCategory>('mechanical')
+  const [recognitionKey, setRecognitionKey] = useState<RecognitionKey | ''>('')
   const [text, setText] = useState('')
   const close = () => {
     setMode('closed')
@@ -282,16 +331,10 @@ function AddHazard({ tstiId, stepId, library, run }: { tstiId: string; stepId: s
       <>
         <select className={inputClass} value={code} aria-label="Hazard" onChange={(e) => setCode(e.target.value)}>
           <option value="">Select hazard…</option>
-          {CATEGORIES.map((c) => (
-            <optgroup key={c.value} label={c.label}>
-              {library
-                .filter((h) => h.category === c.value)
-                .map((h) => (
-                  <option key={h.code} value={h.code}>
-                    {h.name}
-                  </option>
-                ))}
-            </optgroup>
+          {library.map((h) => (
+            <option key={h.code} value={h.code}>
+              {h.name}
+            </option>
           ))}
         </select>
         <Button variant="primary" disabled={!code} onClick={() => run(async () => { await addLibraryHazard(tstiId, stepId, code); close() })}>
@@ -304,21 +347,32 @@ function AddHazard({ tstiId, stepId, library, run }: { tstiId: string; stepId: s
       <>
         <select
           className={inputClass}
-          value={category}
-          aria-label="Hazard category"
-          onChange={(e) => setCategory(e.target.value as HazardCategory)}
+          value={recognitionKey}
+          aria-label="Hazard Recognition box"
+          onChange={(e) => setRecognitionKey(e.target.value as RecognitionKey)}
         >
-          {CATEGORIES.map((c) => (
-            <option key={c.value} value={c.value}>
-              {c.label}
-            </option>
+          <option value="">Hazard Recognition box…</option>
+          {GROUPS.map(([group, g]) => (
+            <optgroup key={group} label={g.label}>
+              {RECOGNITION_ITEMS.filter((i) => i.group === group).map((i) => (
+                <option key={i.key} value={i.key}>
+                  {i.label}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
         <input className={inputClass} value={text} placeholder="Describe the hazard" aria-label="Hazard description" onChange={(e) => setText(e.target.value)} />
         <Button
           variant="primary"
-          disabled={!text.trim()}
-          onClick={() => run(async () => { await addCustomHazard(tstiId, stepId, category, text); close() })}
+          disabled={!text.trim() || !recognitionKey}
+          onClick={() =>
+            run(async () => {
+              if (!recognitionKey) return
+              await addCustomHazard(tstiId, stepId, recognitionKey, text)
+              close()
+            })
+          }
         >
           Add hazard
         </Button>

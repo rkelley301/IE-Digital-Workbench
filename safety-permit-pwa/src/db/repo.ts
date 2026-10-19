@@ -3,17 +3,17 @@
 
 import type { Table } from 'dexie';
 import { db } from './schema';
+import { blankPermitFields, blankTstiFields } from './defaults';
 import type {
   Control,
-  EnergyCheck,
   GasTest,
-  HazardCategory,
   Isolation,
   JsaStep,
   Permit,
   PermitClosure,
   RuleAck,
   Signature,
+  SignatureRole,
   StepHazard,
   Tsti,
   TstiPpe,
@@ -89,8 +89,6 @@ async function removeRecord(name: FieldTableName, id: string): Promise<void> {
 
 // ---------- Creation ----------
 
-const CATEGORIES: HazardCategory[] = ['gravity', 'pressure', 'temperature', 'chemical', 'electrical', 'mechanical', 'noise'];
-
 /** Number of task step rows a new TSTI starts with (matches the paper form). */
 export const DEFAULT_STEP_COUNT = 5;
 
@@ -104,9 +102,7 @@ export async function createPermitDraft(permitNumber = ''): Promise<{ permitId: 
     siteId: SITE_ID,
     permitNumber,
     date: ts,
-    location: '',
-    equipment: '',
-    workConditions: [],
+    ...blankPermitFields(),
     status: 'draft',
     createdAt: ts,
     updatedAt: ts,
@@ -114,12 +110,8 @@ export async function createPermitDraft(permitNumber = ''): Promise<{ permitId: 
   const tsti: Tsti = {
     id: tstiId,
     permitId,
-    jobDescription: '',
-    crewNames: [],
-    hazardChecklist: Object.fromEntries(CATEGORIES.map((c) => [c, { present: null } satisfies EnergyCheck])) as Record<
-      HazardCategory,
-      EnergyCheck
-    >,
+    date: ts,
+    ...blankTstiFields(),
     stopWorkAcknowledged: false,
     createdAt: ts,
     updatedAt: ts,
@@ -132,6 +124,55 @@ export async function createPermitDraft(permitNumber = ''): Promise<{ permitId: 
     }
   });
   return { permitId, tstiId };
+}
+
+/** Upsert the one signature for a permit/doc/role. A blank name removes it. */
+export async function setSignature(
+  permitId: string,
+  docType: Signature['docType'],
+  role: SignatureRole,
+  changes: { name?: string; signedAt?: string; badgeOrEmployeeId?: string },
+): Promise<void> {
+  await db.transaction('rw', [db.signatures, db.outbox], async () => {
+    const existing = await db.signatures.where('[permitId+docType+role]').equals([permitId, docType, role]).first();
+    const next: Signature = { id: existing?.id ?? newId(), permitId, docType, role, name: '', signedAt: '', ...existing, ...changes };
+    if (!next.name.trim() && !next.signedAt && !next.badgeOrEmployeeId) {
+      if (existing) await removeRecord('signatures', existing.id);
+      return;
+    }
+    await putRecord('signatures', next);
+  });
+}
+
+/** Record or clear a site rule acknowledgment. */
+export async function setRuleAck(permitId: string, ruleCode: string, requirementKey: string, acknowledgedBy: string | null): Promise<void> {
+  await db.transaction('rw', [db.ruleAcks, db.outbox], async () => {
+    const existing = await db.ruleAcks.where('[permitId+ruleCode+requirementKey]').equals([permitId, ruleCode, requirementKey]).first();
+    if (acknowledgedBy === null || !acknowledgedBy.trim()) {
+      if (existing) await removeRecord('ruleAcks', existing.id);
+      return;
+    }
+    const ack: RuleAck = { id: existing?.id ?? newId(), permitId, ruleCode, requirementKey, acknowledgedBy, acknowledgedAt: existing?.acknowledgedAt ?? now() };
+    await putRecord('ruleAcks', ack);
+  });
+}
+
+export async function addGasTest(permitId: string): Promise<void> {
+  const test: GasTest = { id: newId(), permitId, testedAt: now(), testedBy: '', instrumentId: '', testLocation: '', continuous: false, analytes: [], acceptable: null };
+  await putRecord('gasTests', test);
+}
+
+export async function deleteGasTest(id: string): Promise<void> {
+  await db.transaction('rw', [db.gasTests, db.outbox], () => removeRecord('gasTests', id));
+}
+
+/** Get the closure record for a permit, creating a blank one if needed. */
+export async function ensureClosure(permitId: string): Promise<PermitClosure> {
+  const existing = await db.closures.where('permitId').equals(permitId).first();
+  if (existing) return existing;
+  const closure: PermitClosure = { id: newId(), permitId, answers: {} };
+  await putRecord('closures', closure);
+  return closure;
 }
 
 export async function addStep(tstiId: string): Promise<void> {

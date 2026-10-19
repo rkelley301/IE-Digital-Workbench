@@ -2,70 +2,55 @@
 // Sources: the app spec knowledge base ('site_kb') and the Morris site safety
 // training notes that Site_Safety_Sim.html was built from ('training_notes p. N').
 // Where neither source names PPE for a hazard, requiredPpe is empty (baseline only)
-// and the technician specifies it. Nothing here should be invented.
+// and the technician specifies it. Generic hazards are not listed: the Form 3 Hazard
+// Recognition boxes cover those, and job-specific hazards are entered as free text.
 
+import { GLOVES_REQUIRED, PPE_REQUIRED } from '../../forms/templates';
 import type { Hazard, PpeItem, SiteRule, WorkCondition } from '../types';
 
 export const SITE_ID = 'morris';
 
+// PPE matrix keyed to the Form 4 "PPE Required" and "Gloves Required" boxes.
+// Baseline items that are not boxes on Form 4 are listed as 'baseline_only'.
 export const PPE_ITEMS: PpeItem[] = [
-  // Mandatory baseline, every job
-  { code: 'hard_hat', name: 'Hard hat', baseline: true },
-  { code: 'safety_glasses', name: 'Safety glasses', baseline: true },
-  { code: 'fr_clothing', name: 'FR clothing', baseline: true },
-  { code: 'leather_gloves', name: 'Leather work gloves', baseline: true },
-  { code: 'safety_boots', name: 'Safety boots', baseline: true },
-  // Chemical
-  { code: 'chem_suit', name: 'Chemical suit', baseline: false },
-  { code: 'chem_gloves', name: 'Chemical gloves', baseline: false },
-  { code: 'face_shield', name: 'Face shield', baseline: false },
-  // Noise: double hearing protection
-  { code: 'ear_plugs', name: 'Ear plugs', baseline: false },
-  { code: 'ear_muffs', name: 'Ear muffs', baseline: false },
-  // Fall > 6 ft
-  { code: 'harness', name: 'Full body harness', baseline: false },
-  { code: 'double_lanyard', name: 'Double lanyards', baseline: false },
+  ...PPE_REQUIRED.filter((i) => i.key !== 'ppe_other').map((i) => ({
+    code: i.key,
+    name: i.label,
+    baseline: i.key === 'head_protection' || i.key === 'safety_glasses',
+    list: 'ppe_required' as const,
+  })),
+  ...GLOVES_REQUIRED.filter((i) => i.key !== 'gloves_other').map((i) => ({
+    code: i.key,
+    name: i.label,
+    baseline: false,
+    list: 'gloves_required' as const,
+  })),
+  // Mandatory baseline with no box on Form 4
+  { code: 'fr_clothing', name: 'FR clothing', baseline: true, list: 'baseline_only' },
+  { code: 'leather_gloves', name: 'Leather work gloves', baseline: true, list: 'baseline_only' },
+  { code: 'safety_boots', name: 'Safety boots', baseline: true, list: 'baseline_only' },
 ];
 
 export const BASELINE_PPE = PPE_ITEMS.filter((p) => p.baseline).map((p) => p.code);
 
-const CHEMICAL_PPE = ['chem_suit', 'chem_gloves', 'face_shield'];
-const NO_KB_PPE = 'PPE beyond baseline is not defined in the site knowledge base. Technician to specify.';
+// Chemical = chemical suit, gloves, face shield (site KB), as Form 4 boxes.
+const CHEMICAL_PPE = ['chem_resistant_clothing', 'gloves_chemical', 'face_shield'];
 
+// recognitionKeys map each hazard to the Form 3 Hazard Recognition boxes it falls
+// under; Page 1 validation requires those boxes checked.
 export const HAZARDS: Hazard[] = [
-  // Gravity
   {
     code: 'gravity.fall_over_6ft',
-    category: 'gravity',
+    recognitionKeys: ['fall_from_heights'],
     name: 'Fall from height > 6 ft',
     description: 'Work more than 6 ft above a lower level.',
-    requiredPpe: ['harness', 'double_lanyard'],
+    requiredPpe: ['fall_protection'],
     triggers: ['work_at_height'],
     suggestedControls: [{ level: 'ppe', text: 'Full body harness with double lanyards' }],
   },
   {
-    code: 'gravity.general',
-    category: 'gravity',
-    name: 'Gravity (other)',
-    description: NO_KB_PPE,
-    requiredPpe: [],
-    triggers: [],
-    suggestedControls: [],
-  },
-  // Pressure
-  {
-    code: 'pressure.general',
-    category: 'pressure',
-    name: 'Stored pressure',
-    description: NO_KB_PPE,
-    requiredPpe: [],
-    triggers: [],
-    suggestedControls: [],
-  },
-  // Temperature
-  {
     code: 'temperature.hot_work_ignition',
-    category: 'temperature',
+    recognitionKeys: ['arcing_sparks'],
     name: 'Hot work ignition source',
     description: 'Sparks, heat, or open flame. SPARK / HEAT / FLAME = THINK HOT WORK.',
     requiredPpe: [],
@@ -76,18 +61,8 @@ export const HAZARDS: Hazard[] = [
     ],
   },
   {
-    code: 'temperature.general',
-    category: 'temperature',
-    name: 'Temperature (other)',
-    description: NO_KB_PPE,
-    requiredPpe: [],
-    triggers: [],
-    suggestedControls: [],
-  },
-  // Chemical
-  {
     code: 'chemical.general',
-    category: 'chemical',
+    recognitionKeys: ['chemical_liquid_vapor'],
     name: 'Chemical exposure',
     description: 'Contact with or exposure to hazardous chemicals.',
     requiredPpe: CHEMICAL_PPE,
@@ -96,7 +71,7 @@ export const HAZARDS: Hazard[] = [
   },
   {
     code: 'chemical.ammonia',
-    category: 'chemical',
+    recognitionKeys: ['chemical_liquid_vapor'],
     name: 'Ammonia system',
     description: 'Work on ammonia systems. Stainless steel tools and components only.',
     requiredPpe: CHEMICAL_PPE,
@@ -108,7 +83,7 @@ export const HAZARDS: Hazard[] = [
   },
   {
     code: 'chemical.hydrogen',
-    category: 'chemical',
+    recognitionKeys: ['flammable_material'],
     name: 'Hydrogen (HPU)',
     description: 'Hydrogen is extremely flammable. No open flames at the Hydrogen Purification Unit.',
     requiredPpe: [],
@@ -120,7 +95,7 @@ export const HAZARDS: Hazard[] = [
   },
   {
     code: 'chemical.methyl_chloride',
-    category: 'chemical',
+    recognitionKeys: ['flammable_material', 'chemical_liquid_vapor'],
     name: 'Methyl chloride',
     description: 'Highly flammable and hazardous chemical.',
     requiredPpe: CHEMICAL_PPE,
@@ -132,7 +107,7 @@ export const HAZARDS: Hazard[] = [
   },
   {
     code: 'chemical.arquad',
-    category: 'chemical',
+    recognitionKeys: ['flammable_material', 'chemical_liquid_vapor'],
     name: 'Arquad Area',
     description: 'Flammable liquids plus potential eye and chemical irritation hazards.',
     requiredPpe: CHEMICAL_PPE,
@@ -141,7 +116,7 @@ export const HAZARDS: Hazard[] = [
   },
   {
     code: 'chemical.confined_space_atmosphere',
-    category: 'chemical',
+    recognitionKeys: ['confined_space'],
     name: 'Confined space atmosphere',
     description: 'O2 below 19.5% is oxygen deficient (normal air is about 20.9%).',
     requiredPpe: [],
@@ -153,33 +128,12 @@ export const HAZARDS: Hazard[] = [
       { level: 'administrative', text: 'Rescue plan in place before entry' },
     ],
   },
-  // Electrical
-  {
-    code: 'electrical.general',
-    category: 'electrical',
-    name: 'Electrical energy',
-    description: NO_KB_PPE,
-    requiredPpe: [],
-    triggers: [],
-    suggestedControls: [],
-  },
-  // Mechanical
-  {
-    code: 'mechanical.general',
-    category: 'mechanical',
-    name: 'Mechanical energy',
-    description: NO_KB_PPE,
-    requiredPpe: [],
-    triggers: [],
-    suggestedControls: [],
-  },
-  // Noise
   {
     code: 'noise.high',
-    category: 'noise',
+    recognitionKeys: ['noise_excessive'],
     name: 'High noise',
     description: 'High noise area or noisy task.',
-    requiredPpe: ['ear_plugs', 'ear_muffs'],
+    requiredPpe: ['hearing_protection'],
     triggers: [],
     suggestedControls: [{ level: 'ppe', text: 'Double hearing protection (plugs + muffs)' }],
   },
@@ -303,3 +257,42 @@ export const HOT_WORK_TASKS: { key: string; label: string; sets: WorkCondition[]
 export const O2_DEFICIENT_BELOW_PCT = 19.5;
 
 export const DISCLAIMER = 'Technician is final authority. App is a drafting tool.';
+
+// ---------- Form → rule trigger mapping ----------
+
+/** PTW 1 boxes that set a work condition, so checking them fires the Morris rules. */
+export const PTW1_CONDITION_MAP: {
+  workActivities: Partial<Record<string, WorkCondition[]>>;
+  chemicals: Partial<Record<string, WorkCondition[]>>;
+} = {
+  workActivities: {
+    confined_space_entry: ['confined_space'],
+    work_at_heights: ['work_at_height'],
+  },
+  chemicals: {
+    ammonia: ['ammonia_system'],
+    hydrogen: ['hpu'],
+    methyl_chloride: ['methyl_chloride'],
+  },
+};
+
+/** App-only site triggers with no box on the paper PTW. */
+export const SITE_TRIGGER_OPTIONS: { condition: WorkCondition; label: string }[] = [
+  { condition: 'hpu', label: 'Work in the Hydrogen Purification Unit (HPU)' },
+  { condition: 'arquad_area', label: 'Work in the Arquad Area' },
+  { condition: 'hazardous_area', label: 'Work in a hazardous area' },
+];
+
+/**
+ * Form 4 boxes a site rule makes mandatory. They are checked and locked on Page 2
+ * while the condition applies.
+ */
+export const MANDATED_FORM_CHECKS: {
+  condition: WorkCondition;
+  ruleCode: string;
+  safeWorkPractices: string[];
+  basicSafeguards: string[];
+}[] = [
+  { condition: 'confined_space', ruleCode: 'MORRIS-CSE', safeWorkPractices: ['confined_space_entry'], basicSafeguards: ['attendant', 'ventilation_exhaust'] },
+  { condition: 'hot_work', ruleCode: 'MORRIS-HOT', safeWorkPractices: [], basicSafeguards: ['fire_watch'] },
+];

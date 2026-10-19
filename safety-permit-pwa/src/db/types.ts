@@ -3,7 +3,30 @@
 // offline on different devices never collide if a sync backend is added later.
 // Reference tables (hazards, PPE, site rules) are keyed by stable string codes.
 
+import type {
+  ANGLE_GRINDER_CHECKS,
+  BASIC_SAFEGUARDS,
+  CLOSURE_QUESTIONS,
+  FALL_PROTECTION,
+  GENERAL_CONSIDERATIONS,
+  HAZARDOUS_CONDITIONS,
+  HEAVY_EQUIPMENT,
+  HIGHLY_HAZARDOUS_CHEMICALS,
+  Key,
+  LeaderQuestionKey,
+  RecognitionKey,
+  SAFE_WORK_PRACTICES,
+  SAFETY_CHECK,
+  STOP_WORK_CONDITIONS,
+  TaskPlanningField,
+  WORK_ACTIVITIES,
+  WORK_AREAS,
+} from '../forms/templates';
+
 export type ISODate = string; // ISO 8601 timestamp
+
+export type YesNo = 'yes' | 'no';
+export type YesNoNa = 'yes' | 'no' | 'na';
 
 // ---------- Enumerations ----------
 
@@ -14,7 +37,10 @@ export type ISODate = string; // ISO 8601 timestamp
  */
 export type PermitStatus = 'draft' | 'ready_to_sign' | 'active' | 'invalidated' | 'closed' | 'void';
 
-/** Site work conditions that trigger hardcoded Morris rules. Set on the PTW header. */
+/**
+ * Site work conditions that trigger hardcoded Morris rules. Derived from the PTW 1
+ * checkboxes plus the app-only site trigger section (see deriveWorkConditions).
+ */
 export type WorkCondition =
   | 'ammonia_system'
   | 'hpu' // Hydrogen Purification Unit / hydrogen systems
@@ -26,29 +52,26 @@ export type WorkCondition =
   | 'hazardous_area'
   | 'work_at_height';
 
-/** TSTI Page 2 hazard checklist categories, plus Noise from the PPE matrix. */
-export type HazardCategory =
-  | 'gravity'
-  | 'pressure'
-  | 'temperature'
-  | 'chemical'
-  | 'electrical'
-  | 'mechanical'
-  | 'noise';
-
 export type ControlLevel = 'engineering' | 'administrative' | 'ppe';
 
 export type IsolationType = 'electrical' | 'mechanical' | 'process' | 'hydraulic' | 'pneumatic';
 
 export type SignatureRole =
+  // PTW 1
+  | 'acceptor'
   | 'issuer'
-  | 'receiver'
-  | 'safety'
+  | 'requestor'
+  // Required by site rules (app-only, not on the paper PTW)
   | 'hole_watch'
   | 'fire_watch'
   | 'site_director' // HPU open-flame approval
-  | 'closure_issuer'
-  | 'closure_receiver';
+  // TSTI Page 2
+  | 'employee'
+  | 'fls'
+  | 'management'
+  // Closure sign-off (app-only; Form 2 has no signature lines)
+  | 'closure_acceptor'
+  | 'closure_issuer';
 
 export type DocType = 'ptw' | 'tsti' | 'closure';
 
@@ -64,9 +87,21 @@ export interface Permit {
   siteId: string; // 'morris'
   permitNumber: string;
   date: ISODate;
-  location: string;
-  equipment: string; // equipment tag / description
+  // Form 1 checkboxes
+  workActivities: Key<typeof WORK_ACTIVITIES>[];
+  workAreas: Key<typeof WORK_AREAS>[];
+  generalConsiderations: Key<typeof GENERAL_CONSIDERATIONS>[];
+  hazardousConditions: Key<typeof HAZARDOUS_CONDITIONS>[];
+  chemicals: Key<typeof HIGHLY_HAZARDOUS_CHEMICALS>[];
+  chemicalsOther: string; // blank = "Other" unchecked
+  /** App-only site triggers not on the paper PTW (hot work, Arquad, etc.). */
+  siteConditions: WorkCondition[];
+  /** HOT_WORK_TASKS keys picked in the app-only section. */
+  hotWorkTasks: string[];
+  /** Derived: Form 1 selections + siteConditions + hotWorkTasks. Never edit directly. */
   workConditions: WorkCondition[];
+  /** Form 2 Safety Check. Every item must be answered, and none "No", before work starts. */
+  safetyCheck: Partial<Record<Key<typeof SAFETY_CHECK>, YesNoNa>>;
   status: PermitStatus;
   /** Free-text rescue plan. Required when workConditions includes 'confined_space'. */
   rescuePlan?: string;
@@ -129,6 +164,7 @@ export interface Signature {
   role: SignatureRole;
   name: string;
   badgeOrEmployeeId?: string;
+  /** Date and time written beside the signature. */
   signedAt: ISODate;
   /** Optional drawn signature as a PNG data URL. */
   imageDataUrl?: string;
@@ -136,21 +172,42 @@ export interface Signature {
 
 // ---------- TSTI Page 1 & 2 ----------
 
-export interface EnergyCheck {
-  /** null = not yet answered. Every category must be answered before sign-off. */
-  present: boolean | null;
-  notes?: string;
-}
-
 export interface Tsti {
   id: string;
   permitId: string;
-  // Page 1
-  jobDescription: string;
-  crewNames: string[];
-  // Page 2
-  hazardChecklist: Record<HazardCategory, EnergyCheck>;
-  /** Mandatory. Final submit is disabled while false. */
+  // Form 3 (Page 1): Task Planning
+  date: ISODate;
+  planning: Record<TaskPlanningField, string>; // jobDescription = Task Description
+  stopWorkConditions: Key<typeof STOP_WORK_CONDITIONS>[];
+  comments: string;
+  hazardRecognition: RecognitionKey[];
+  envOther: string; // Environmental: Other text
+  leaderAnswers: Partial<Record<LeaderQuestionKey, YesNo>>;
+  leaderQ10: string;
+  // Form 4 (Page 2)
+  standardEquipment: string;
+  specialEquipment: string;
+  supportCraft: string;
+  safeWorkPractices: Key<typeof SAFE_WORK_PRACTICES>[];
+  safeWorkPracticesOther: string;
+  basicSafeguards: Key<typeof BASIC_SAFEGUARDS>[];
+  ppeOther: string;
+  glovesChemicalSpec: string;
+  glovesOther: string;
+  glovesOtherApprovedBy: string; // Site Manager approval
+  fallProtection: Key<typeof FALL_PROTECTION>[];
+  fallProtectionOther: string;
+  heavyEquipment: Key<typeof HEAVY_EQUIPMENT>[];
+  heavyEquipmentWeight: string;
+  angleGrinder: {
+    requester: string;
+    supervisor: string;
+    checks: Key<typeof ANGLE_GRINDER_CHECKS>[];
+    decision: 'approved' | 'denied' | null;
+  };
+  twoUpRequired: YesNo | null;
+  twoUpActivity: string;
+  /** Mandatory (app requirement, not on the paper form). Final submit is disabled while false. */
   stopWorkAcknowledged: boolean;
   stopWorkAckBy?: string;
   stopWorkAckAt?: ISODate;
@@ -172,7 +229,8 @@ export interface StepHazard {
   tstiId: string;
   stepId: string;
   hazardCode?: string; // FK -> hazards.code; absent for free-text hazards
-  category: HazardCategory;
+  /** Hazard Recognition boxes this hazard falls under. Each must be checked on Page 1. */
+  recognitionKeys: RecognitionKey[];
   description: string;
   source: ItemSource;
   sourceRef?: string; // site rule code when source === 'site_rule'
@@ -189,16 +247,14 @@ export interface Control {
   sourceRef?: string;
 }
 
-/** TSTI Page 2: required PPE matrix row for this job. */
+/** TSTI Page 2: a checked PPE Required / Gloves Required box (or app baseline item). */
 export interface TstiPpe {
   id: string;
   tstiId: string;
   ppeCode: string; // FK -> ppeItems.code
   source: ItemSource;
-  /** Hazard codes / rule codes that require this item. */
+  /** 'baseline' and/or hazard codes that require this item. */
   requiredBy: string[];
-  /** Technician confirms the item is on hand and in good condition. */
-  confirmed: boolean;
 }
 
 /** Acknowledgement of a site rule requirement (e.g. "stainless tools only"). */
@@ -216,14 +272,13 @@ export interface RuleAck {
 export interface PermitClosure {
   id: string;
   permitId: string;
-  siteCleanupVerified: boolean;
-  siteCleanupVerifiedBy?: string;
-  isolationsRemovedVerified: boolean;
-  isolationsRemovedVerifiedBy?: string;
+  /** Form 2 Permit Closure answers. */
+  answers: Partial<Record<Key<typeof CLOSURE_QUESTIONS>, YesNoNa>>;
+  /** Manager any "No" answers were reported to (required when any answer is "No"). */
+  noAnswersReportedTo?: string;
   /** Hot work only: when the fire watch ended. Must be >= workEndedAt + 30 min. */
   fireWatchEndedAt?: ISODate;
   fireWatchBy?: string;
-  remarks?: string;
   closedAt?: ISODate;
 }
 
@@ -234,11 +289,14 @@ export interface PpeItem {
   name: string;
   /** Part of the mandatory baseline worn on every job. */
   baseline: boolean;
+  /** Where it appears: a Form 4 list, or 'baseline_only' for baseline items not on the form. */
+  list: 'ppe_required' | 'gloves_required' | 'baseline_only';
 }
 
 export interface Hazard {
   code: string;
-  category: HazardCategory;
+  /** Hazard Recognition boxes this hazard falls under. */
+  recognitionKeys: RecognitionKey[];
   name: string;
   description: string;
   requiredPpe: string[]; // ppeItems.code

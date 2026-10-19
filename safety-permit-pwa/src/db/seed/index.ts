@@ -3,7 +3,7 @@ import { HAZARDS, PPE_ITEMS, SITE_RULES } from './reference';
 import { TRAINING_SCENARIOS } from './training';
 
 /** Bump when reference data changes. Field records (permits etc.) are never touched. */
-export const SEED_VERSION = 1;
+export const SEED_VERSION = 2;
 
 /** Load or refresh hardcoded reference tables. Safe to call on every app start. */
 export async function ensureSeed(): Promise<void> {

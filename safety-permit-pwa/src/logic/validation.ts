@@ -8,7 +8,6 @@ import type {
   GasAnalyte,
   GasTest,
   Hazard,
-  HazardCategory,
   Isolation,
   JsaStep,
   Permit,
@@ -23,7 +22,30 @@ import type {
   Tsti,
   TstiPpe,
 } from '../db/types';
-import { expandConditions, triggeredRules } from './safetyEngine';
+import {
+  ANGLE_GRINDER_CHECKS,
+  ANGLE_GRINDER_HEADING,
+  BASIC_SAFEGUARDS,
+  CLOSURE_QUESTIONS,
+  GLOVES_OTHER_NOTE,
+  LEADER_Q10,
+  LEADER_QUESTIONS,
+  PTW1_SIGNATURES,
+  SAFE_WORK_PRACTICES,
+  SAFETY_CHECK,
+  TASK_PLANNING_FIELDS,
+  TSTI2_SIGNATURE_LABELS,
+  recognitionLabel,
+  type Item,
+} from '../forms/templates';
+import {
+  expandConditions,
+  mandatedFormChecks,
+  mandatedHazards,
+  mandatedPpe,
+  triggeredRules,
+  type ReferenceData,
+} from './safetyEngine';
 
 export type Section = 'ptw' | 'tsti1' | 'tsti2' | 'rules' | 'closure';
 
@@ -82,15 +104,10 @@ export const isSubmitDisabled = (tsti: Pick<Tsti, 'stopWorkAcknowledged'>): bool
 
 const blank = (s: string | undefined): boolean => !s || s.trim() === '';
 
-const CATEGORY_LABEL: Record<HazardCategory, string> = {
-  gravity: 'Gravity',
-  pressure: 'Pressure',
-  temperature: 'Temperature',
-  chemical: 'Chemical',
-  electrical: 'Electrical',
-  mechanical: 'Mechanical',
-  noise: 'Noise',
-};
+const labelOf = (list: readonly Item[], key: string): string => list.find((i) => i.key === key)?.label ?? key;
+
+const signature = (b: PermitBundle, docType: Signature['docType'], role: SignatureRole) =>
+  b.signatures.find((s) => s.docType === docType && s.role === role);
 
 const ANALYTE_FIELD: Record<GasAnalyte, keyof GasTest> = {
   o2: 'o2Pct',
@@ -120,89 +137,149 @@ function gasRequirementMet(b: PermitBundle, req: Extract<RuleRequirement, { kind
   });
 }
 
-// ---------- PTW 1 ----------
+// ---------- PTW 1 (Form 1) ----------
 
-export function validatePtwHeader(b: PermitBundle): Issue[] {
+export function validatePtw1(b: PermitBundle): Issue[] {
   const issues: Issue[] = [];
-  const p = b.permit;
   const need = (ok: boolean, message: string, targetId?: string) => {
     if (!ok) issues.push({ section: 'ptw', message, targetId });
   };
-  need(!blank(p.permitNumber), 'Enter permit number.');
-  need(!blank(p.date), 'Enter date.');
-  need(!blank(p.location), 'Enter location.');
-  need(!blank(p.equipment), 'Enter equipment.');
+  const p = b.permit;
+  need(!blank(p.permitNumber), 'Enter Permit Number.');
+  need(!blank(p.date), 'Enter Date.');
+  need(p.workActivities.length > 0, 'Check at least one Work Activity.');
+  if (expandConditions(p.workConditions).includes('confined_space')) need(!blank(p.rescuePlan), 'Enter rescue plan.');
+
   for (const iso of b.isolations) {
     need(!blank(iso.isolationPoint), 'Enter isolation point.', iso.id);
-    need(!blank(iso.isolatedBy), `Isolation ${iso.isolationPoint || ''}: enter isolated by.`.trim(), iso.id);
     need(!blank(iso.verifiedBy), `Verify zero energy: ${iso.isolationPoint || 'isolation'}.`, iso.id);
   }
   for (const t of b.gasTests) {
+    const where = t.testLocation || 'location';
+    need(!blank(t.testedBy), `Gas test at ${where}: enter tested by.`, t.id);
+    need(!blank(t.instrumentId), `Gas test at ${where}: enter instrument ID.`, t.id);
     if (isOxygenDeficient(t) && t.acceptable !== false) {
-      need(false, `Gas test at ${t.testLocation || 'location'}: O2 below ${O2_DEFICIENT_BELOW_PCT}% is oxygen deficient. Mark it failed.`, t.id);
+      need(false, `Gas test at ${where}: O2 below ${O2_DEFICIENT_BELOW_PCT}% is oxygen deficient. Mark it failed.`, t.id);
     }
-    need(t.acceptable !== null, `Gas test at ${t.testLocation || 'location'}: mark pass or fail.`, t.id);
+    need(t.acceptable !== null, `Gas test at ${where}: mark pass or fail.`, t.id);
   }
   return issues;
 }
 
 export function validatePtwSignatures(b: PermitBundle): Issue[] {
-  const roles: [SignatureRole, string][] = [
-    ['issuer', 'Issuer'],
-    ['receiver', 'Receiver'],
-    ['safety', 'Safety'],
-  ];
-  return roles
-    .filter(([role]) => !hasSignature(b, 'ptw', role))
-    .map(([, label]) => ({ section: 'ptw' as const, message: `Sign: ${label}.` }));
+  return PTW1_SIGNATURES.flatMap(({ key, label }) => {
+    const sig = signature(b, 'ptw', key);
+    if (!sig || blank(sig.name)) return [{ section: 'ptw' as const, message: `Sign: ${label}.` }];
+    if (!sig.signedAt) return [{ section: 'ptw' as const, message: `${label}: enter date and time.` }];
+    return [];
+  });
 }
 
-// ---------- TSTI Page 1 ----------
+/** Form 2 Safety Check: answered in full, and no "No", before work can start. */
+export function validateSafetyCheck(b: PermitBundle): Issue[] {
+  return SAFETY_CHECK.flatMap(({ key, label }) => {
+    const a = b.permit.safetyCheck[key];
+    if (!a) return [{ section: 'closure' as const, message: `Safety Check: answer "${label}"` }];
+    if (a === 'no') return [{ section: 'closure' as const, message: `Safety Check: "${label}" is No. Work cannot start.` }];
+    return [];
+  });
+}
+
+// ---------- TSTI Page 1 (Form 3) ----------
 
 export function validateTstiPage1(b: PermitBundle): Issue[] {
   const issues: Issue[] = [];
   const push = (message: string, targetId?: string) => issues.push({ section: 'tsti1', message, targetId });
+  const t = b.tsti;
 
-  if (blank(b.tsti.jobDescription)) push('Enter job description.');
-  if (!b.steps.some((s) => !blank(s.description))) push('Describe at least one task step.');
+  if (blank(t.date)) push('Enter Date.');
+  for (const f of TASK_PLANNING_FIELDS) if (blank(t.planning[f.key])) push(`Enter ${f.label}.`);
 
+  // JSA table
+  if (!b.steps.some((s) => !blank(s.description))) push('Describe at least one Basic Task Step.');
   for (const step of b.steps) {
     const hz = b.stepHazards.filter((h) => h.stepId === step.id);
     if (blank(step.description)) {
       if (hz.length > 0) push(`Step ${step.seq}: describe the step or move its hazards.`, step.id);
       continue;
     }
-    if (hz.length === 0) push(`Step ${step.seq}: add a hazard.`, step.id);
+    if (hz.length === 0) push(`Step ${step.seq}: add a Potential Hazard.`, step.id);
     for (const h of hz) {
-      if (!b.controls.some((c) => c.stepHazardId === h.id)) push(`Step ${step.seq}: add a control for "${h.description}".`, h.id);
+      if (!b.controls.some((c) => c.stepHazardId === h.id)) push(`Step ${step.seq}: add an Action to Eliminate or Control "${h.description}".`, h.id);
     }
   }
+
+  // Every Page 1 hazard must have its Hazard Recognition box checked.
+  const checked = new Set<string>(t.hazardRecognition);
+  for (const h of b.stepHazards) {
+    for (const key of h.recognitionKeys) {
+      if (!checked.has(key)) push(`"${h.description}" is in the JSA. Check Hazard Recognition: ${recognitionLabel(key)}.`, h.id);
+    }
+  }
+  if (checked.has('env_other') && blank(t.envOther)) push('Hazard Recognition: describe Environmental Other.');
+
+  // FLS Mandatory Leader Questions
+  for (const q of LEADER_QUESTIONS) {
+    const a = t.leaderAnswers[q.key];
+    if (!a) push(`Answer Leader Question ${q.label}`);
+    else if (a === 'no' && q.key !== 'q9') push(`Leader Question ${q.label} is No. Resolve before work starts.`);
+  }
+  if (t.leaderAnswers.q9 === 'yes' && blank(t.leaderQ10)) push(`Answer Leader Question ${LEADER_Q10}`);
   return issues;
 }
 
-// ---------- TSTI Page 2 ----------
+// ---------- TSTI Page 2 (Form 4) ----------
 
-export function validateTstiPage2(b: PermitBundle): Issue[] {
+export function validateTstiPage2(b: PermitBundle, ref: ReferenceData = { hazards: b.hazards, rules: b.rules }): Issue[] {
   const issues: Issue[] = [];
   const push = (message: string, targetId?: string) => issues.push({ section: 'tsti2', message, targetId });
+  const t = b.tsti;
 
-  for (const [cat, check] of Object.entries(b.tsti.hazardChecklist) as [HazardCategory, Tsti['hazardChecklist'][HazardCategory]][]) {
-    const label = CATEGORY_LABEL[cat];
-    const onPage1 = b.stepHazards.some((h) => h.category === cat);
-    if (check.present === null) push(`Answer: ${label}.`);
-    else if (check.present && !onPage1) push(`${label} marked present. Add a ${label.toLowerCase()} hazard on Page 1.`);
-    else if (!check.present && onPage1) push(`${label} hazard is on Page 1. Mark ${label} present.`);
+  // Boxes the site rules require
+  const forms = mandatedFormChecks(b.permit.workConditions);
+  for (const [key, rule] of forms.safeWorkPractices) {
+    if (!(t.safeWorkPractices as string[]).includes(key)) push(`${rule}: check Safe Work Practice ${labelOf(SAFE_WORK_PRACTICES, key)}.`);
   }
+  for (const [key, rule] of forms.basicSafeguards) {
+    if (!(t.basicSafeguards as string[]).includes(key)) push(`${rule}: check Basic Safeguard ${labelOf(BASIC_SAFEGUARDS, key)}.`);
+  }
+  if (t.safeWorkPractices.includes('other') && blank(t.safeWorkPracticesOther)) push('Safe Work Practices: describe Other.');
 
-  for (const row of b.tstiPpe) {
-    if (!row.confirmed) {
-      const name = b.ppeItems.find((p) => p.code === row.ppeCode)?.name ?? row.ppeCode;
-      push(`Confirm PPE: ${name}.`, row.id);
+  // PPE matrix: every required item must be checked
+  const ruleHazards = new Set(mandatedHazards(b.permit.workConditions, ref).filter((m) => m.source === 'site_rule').map((m) => m.hazard.code));
+  const present = b.stepHazards.flatMap((h) => (h.hazardCode ? [h.hazardCode] : []));
+  for (const need of mandatedPpe(present, ruleHazards, ref)) {
+    if (!b.tstiPpe.some((p) => p.ppeCode === need.ppeCode)) {
+      push(`Check PPE: ${b.ppeItems.find((p) => p.code === need.ppeCode)?.name ?? need.ppeCode}.`);
     }
   }
+  if (b.tstiPpe.some((p) => p.ppeCode === 'gloves_chemical') && blank(t.glovesChemicalSpec)) push('Gloves: specify Chemical Resistant type.');
+  if (!blank(t.glovesOther) && blank(t.glovesOtherApprovedBy)) push(`Gloves Other: enter Site Manager approval ${GLOVES_OTHER_NOTE}.`);
+  if (t.fallProtection.includes('other') && blank(t.fallProtectionOther)) push('Fall Protection: describe Other.');
 
-  if (isSubmitDisabled(b.tsti)) push('Acknowledge STOP Work Authority.');
-  else if (blank(b.tsti.stopWorkAckBy)) push('Enter name on STOP Work acknowledgment.');
+  // Angle Grinder: Cutting Operation Permit
+  if (t.safeWorkPractices.includes('angle_grinder_cutting')) {
+    const g = t.angleGrinder;
+    if (blank(g.requester)) push(`${ANGLE_GRINDER_HEADING}: enter Requester / User.`);
+    if (blank(g.supervisor)) push(`${ANGLE_GRINDER_HEADING}: enter Supervisor.`);
+    for (const c of ANGLE_GRINDER_CHECKS) if (!g.checks.includes(c.key)) push(`${ANGLE_GRINDER_HEADING}: check ${c.label}.`);
+    if (g.decision === null) push(`${ANGLE_GRINDER_HEADING}: mark Approved or Denied.`);
+    if (g.decision === 'denied') push(`${ANGLE_GRINDER_HEADING}: Denied. Do not cut.`);
+  }
+
+  // Signatures
+  const L = TSTI2_SIGNATURE_LABELS;
+  if (t.twoUpRequired === null) push(`Answer ${L.twoUp}`);
+  if (t.twoUpRequired === 'yes' && blank(t.twoUpActivity)) push(`${L.twoUp} Yes: list activity.`);
+  const emp = signature(b, 'tsti', 'employee');
+  if (!emp || blank(emp.name)) push(`Sign: ${L.employee}.`);
+  else if (blank(emp.badgeOrEmployeeId)) push(`Enter ${L.badge}.`);
+  const fls = signature(b, 'tsti', 'fls');
+  if (!fls || blank(fls.name)) push(`Sign: ${L.fls}.`);
+  else if (!fls.signedAt) push(`${L.fls}: enter Date.`);
+
+  if (isSubmitDisabled(t)) push('Acknowledge STOP Work Authority.');
+  else if (blank(t.stopWorkAckBy)) push('Enter name on STOP Work acknowledgment.');
   return issues;
 }
 
@@ -269,12 +346,13 @@ export function validateRuleRequirements(
 
 // ---------- Gates ----------
 
-/** Everything that must be complete before anyone signs the PTW. */
+/** Everything except the PTW signatures. Signature blocks stay locked until this is empty. */
 export function validateBeforeSignatures(b: PermitBundle): Issue[] {
   return [
-    ...validatePtwHeader(b),
+    ...validatePtw1(b),
     ...validateTstiPage1(b),
     ...validateTstiPage2(b),
+    ...validateSafetyCheck(b),
     // Role signatures (hole watch, fire watch, Site Director) are collected with the
     // PTW signatures, so they are checked at sign-off, not here.
     ...validateRuleRequirements(b, 'sign_off', ['role', 'approval']),
@@ -289,9 +367,10 @@ export function validateSignOff(b: PermitBundle): Issue[] {
   }
   return [
     ...issues,
-    ...validatePtwHeader(b),
+    ...validatePtw1(b),
     ...validateTstiPage1(b),
     ...validateTstiPage2(b),
+    ...validateSafetyCheck(b),
     ...validateRuleRequirements(b, 'sign_off'),
     ...validatePtwSignatures(b),
   ];
@@ -303,15 +382,14 @@ export function validateClosure(b: PermitBundle): Issue[] {
   const c = b.closure;
 
   if (b.permit.status !== 'active' && b.permit.status !== 'invalidated') push('Only an active or invalidated permit can be closed.');
-  if (!c?.siteCleanupVerified || blank(c.siteCleanupVerifiedBy)) push('Verify site cleanup.');
+  for (const q of CLOSURE_QUESTIONS) if (!c?.answers[q.key]) push(`Permit Closure: answer "${q.label}"`);
+  const anyNo = CLOSURE_QUESTIONS.some((q) => c?.answers[q.key] === 'no');
+  if (anyNo && blank(c?.noAnswersReportedTo)) push('Permit Closure has a "No" answer. Enter the manager it was reported to.');
   for (const iso of b.isolations) {
     if (blank(iso.removedBy) || !iso.removedAt) push(`Remove isolation: ${iso.isolationPoint}.`, iso.id);
   }
-  if (b.isolations.length > 0 && (!c?.isolationsRemovedVerified || blank(c.isolationsRemovedVerifiedBy))) {
-    push('Verify all isolations removed.');
-  }
-  if (!hasSignature(b, 'closure', 'closure_issuer')) push('Sign: Closure issuer.');
-  if (!hasSignature(b, 'closure', 'closure_receiver')) push('Sign: Closure receiver.');
+  if (!signature(b, 'closure', 'closure_acceptor')?.name.trim()) push('Sign: Closure - PTW Acceptor.');
+  if (!signature(b, 'closure', 'closure_issuer')?.name.trim()) push('Sign: Closure - Permit Issuer.');
 
   return [...issues, ...validateRuleRequirements(b, 'closure')];
 }

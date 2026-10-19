@@ -7,16 +7,18 @@
 // them disappears and the technician decides whether to keep them.
 
 import { db } from '../db/schema';
-import { newId, now, patchRecord, putRecord } from '../db/repo';
+import { deleteTstiPpe, newId, now, patchRecord, putRecord } from '../db/repo';
 import { seedReady } from '../db/seed';
-import { BASELINE_PPE } from '../db/seed/reference';
+import { BASELINE_PPE, HOT_WORK_TASKS, MANDATED_FORM_CHECKS, PTW1_CONDITION_MAP } from '../db/seed/reference';
+import type { RecognitionKey } from '../forms/templates';
 import type {
   Control,
   ControlLevel,
   Hazard,
-  HazardCategory,
+  Permit,
   SiteRule,
   StepHazard,
+  Tsti,
   TstiPpe,
   WorkCondition,
 } from '../db/types';
@@ -48,6 +50,35 @@ export interface MandatedPpe {
 }
 
 // ---------- Pure rules ----------
+
+/** Work conditions implied by the PTW 1 boxes, the app-only triggers, and hot work tasks. */
+export function deriveWorkConditions(
+  p: Pick<Permit, 'workActivities' | 'chemicals' | 'siteConditions' | 'hotWorkTasks'>,
+): WorkCondition[] {
+  const out = new Set<WorkCondition>(p.siteConditions);
+  for (const a of p.workActivities) for (const c of PTW1_CONDITION_MAP.workActivities[a] ?? []) out.add(c);
+  for (const ch of p.chemicals) for (const c of PTW1_CONDITION_MAP.chemicals[ch] ?? []) out.add(c);
+  for (const t of p.hotWorkTasks) for (const c of HOT_WORK_TASKS.find((h) => h.key === t)?.sets ?? []) out.add(c);
+  return expandConditions([...out]);
+}
+
+export interface MandatedFormChecks {
+  /** Form 4 box key -> rule code that requires it. */
+  safeWorkPractices: Map<string, string>;
+  basicSafeguards: Map<string, string>;
+}
+
+/** Form 4 Safe Work Practices / Basic Safeguards boxes the site rules lock on. */
+export function mandatedFormChecks(conditions: readonly WorkCondition[]): MandatedFormChecks {
+  const conds = expandConditions(conditions);
+  const out: MandatedFormChecks = { safeWorkPractices: new Map(), basicSafeguards: new Map() };
+  for (const m of MANDATED_FORM_CHECKS) {
+    if (!conds.includes(m.condition)) continue;
+    for (const k of m.safeWorkPractices) out.safeWorkPractices.set(k, m.ruleCode);
+    for (const k of m.basicSafeguards) out.basicSafeguards.set(k, m.ruleCode);
+  }
+  return out;
+}
 
 /** Open flame is always hot work. */
 export function expandConditions(conditions: readonly WorkCondition[]): WorkCondition[] {
@@ -197,7 +228,7 @@ async function syncTsti(tstiId: string): Promise<void> {
           tstiId,
           stepId: firstStepId, // technician moves it to the right step
           hazardCode: m.hazard.code,
-          category: m.hazard.category,
+          recognitionKeys: m.hazard.recognitionKeys,
           description: m.hazard.name,
           source: m.source,
           sourceRef: m.sourceRef,
@@ -207,6 +238,14 @@ async function syncTsti(tstiId: string): Promise<void> {
       } else if (existing.source !== m.source || existing.sourceRef !== m.sourceRef) {
         await patchRecord('stepHazards', existing.id, { source: m.source, sourceRef: m.sourceRef });
         Object.assign(existing, { source: m.source, sourceRef: m.sourceRef });
+      }
+    }
+    // Keep coded hazards' recognition boxes in step with the reference library.
+    for (const h of hazards) {
+      const keys = h.hazardCode ? ref.hazards.find((x) => x.code === h.hazardCode)?.recognitionKeys : undefined;
+      if (keys && !sameList(h.recognitionKeys, keys)) {
+        await patchRecord('stepHazards', h.id, { recognitionKeys: keys });
+        h.recognitionKeys = keys;
       }
     }
     for (const h of hazards) {
@@ -244,7 +283,7 @@ async function syncTsti(tstiId: string): Promise<void> {
     for (const n of ppeNeeded) {
       const row = ppeRows.find((p) => p.ppeCode === n.ppeCode);
       if (!row) {
-        const created: TstiPpe = { id: newId(), tstiId, ppeCode: n.ppeCode, source: n.source, requiredBy: n.requiredBy, confirmed: false };
+        const created: TstiPpe = { id: newId(), tstiId, ppeCode: n.ppeCode, source: n.source, requiredBy: n.requiredBy };
         await putRecord('tstiPpe', created);
       } else if (row.source !== n.source || !sameList(row.requiredBy, n.requiredBy)) {
         await patchRecord('tstiPpe', row.id, { source: n.source, requiredBy: n.requiredBy });
@@ -255,8 +294,21 @@ async function syncTsti(tstiId: string): Promise<void> {
         await patchRecord('tstiPpe', row.id, { source: 'manual', requiredBy: [] });
       }
     }
+
+    // 4. Form 4 boxes the site rules require
+    const forms = mandatedFormChecks(conds);
+    const swp = union(tsti.safeWorkPractices, forms.safeWorkPractices.keys());
+    const safeguards = union(tsti.basicSafeguards, forms.basicSafeguards.keys());
+    if (swp.length !== tsti.safeWorkPractices.length || safeguards.length !== tsti.basicSafeguards.length) {
+      await patchRecord('tsti', tstiId, {
+        safeWorkPractices: swp as Tsti['safeWorkPractices'],
+        basicSafeguards: safeguards as Tsti['basicSafeguards'],
+      });
+    }
   });
 }
+
+const union = (a: readonly string[], b: Iterable<string>): string[] => [...new Set([...a, ...b])];
 
 // ---------- Technician additions (always 'manual', always deletable) ----------
 
@@ -269,7 +321,7 @@ export async function addLibraryHazard(tstiId: string, stepId: string, hazardCod
     tstiId,
     stepId,
     hazardCode,
-    category: hazard.category,
+    recognitionKeys: hazard.recognitionKeys,
     description: hazard.name,
     source: 'manual',
   });
@@ -280,12 +332,12 @@ export async function addLibraryHazard(tstiId: string, stepId: string, hazardCod
 export async function addCustomHazard(
   tstiId: string,
   stepId: string,
-  category: HazardCategory,
+  recognitionKey: RecognitionKey,
   description: string,
 ): Promise<void> {
   const text = description.trim();
   if (!text) throw new Error('Describe the hazard.');
-  await putRecord('stepHazards', { id: newId(), tstiId, stepId, category, description: text, source: 'manual' });
+  await putRecord('stepHazards', { id: newId(), tstiId, stepId, recognitionKeys: [recognitionKey], description: text, source: 'manual' });
 }
 
 export async function moveStepHazard(stepHazardId: string, stepId: string): Promise<void> {
@@ -303,15 +355,30 @@ export async function addManualControl(
   await putRecord('controls', { id: newId(), tstiId, stepHazardId, level, text: t, source: 'manual' });
 }
 
-export async function addManualPpe(tstiId: string, ppeCode: string): Promise<void> {
+/** Check or uncheck a PPE / gloves box. Unchecking a required box is refused. */
+export async function setPpeChecked(tstiId: string, ppeCode: string, checked: boolean): Promise<void> {
   const existing = await db.tstiPpe.where('[tstiId+ppeCode]').equals([tstiId, ppeCode]).first();
-  if (existing) return;
-  await putRecord('tstiPpe', { id: newId(), tstiId, ppeCode, source: 'manual', requiredBy: [], confirmed: false });
+  if (checked && !existing) {
+    await putRecord('tstiPpe', { id: newId(), tstiId, ppeCode, source: 'manual', requiredBy: [] });
+  } else if (!checked && existing) {
+    await deleteTstiPpe(existing.id);
+  }
 }
 
-/** Set the permit's work conditions and re-derive everything they require. */
-export async function setWorkConditions(permitId: string, conditions: WorkCondition[]): Promise<void> {
-  await patchRecord('permits', permitId, { workConditions: conditions, updatedAt: now() });
-  const tstis = await db.tsti.where('permitId').equals(permitId).toArray();
-  for (const t of tstis) await applyMandates(t.id);
+type PermitFormChanges = Partial<
+  Pick<Permit, 'permitNumber' | 'date' | 'workActivities' | 'workAreas' | 'generalConsiderations' | 'hazardousConditions' | 'chemicals' | 'chemicalsOther' | 'siteConditions' | 'hotWorkTasks' | 'safetyCheck' | 'rescuePlan'>
+>;
+
+/** Save PTW fields; when trigger boxes change, re-derive conditions and everything they require. */
+export async function updatePermitForm(permitId: string, changes: PermitFormChanges): Promise<void> {
+  const permit = await db.permits.get(permitId);
+  if (!permit) throw new Error('Permit not found.');
+  const next = { ...permit, ...changes };
+  const workConditions = deriveWorkConditions(next);
+  const conditionsChanged = !sameList(workConditions, permit.workConditions);
+  await patchRecord('permits', permitId, { ...changes, workConditions, updatedAt: now() });
+  if (conditionsChanged) {
+    const tstis = await db.tsti.where('permitId').equals(permitId).toArray();
+    for (const t of tstis) await applyMandates(t.id);
+  }
 }
