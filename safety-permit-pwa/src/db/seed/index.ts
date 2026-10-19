@@ -19,3 +19,14 @@ export async function ensureSeed(): Promise<void> {
     await db.meta.put({ key: 'seedVersion', value: SEED_VERSION });
   });
 }
+
+let ready: Promise<void> | undefined
+
+/** ensureSeed() once per page load. Anything that reads reference data awaits this. */
+export function seedReady(): Promise<void> {
+  ready ??= ensureSeed().catch((err: unknown) => {
+    ready = undefined // allow a retry on the next call
+    throw err
+  })
+  return ready
+}

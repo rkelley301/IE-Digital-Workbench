@@ -1,22 +1,34 @@
-import { useLiveQuery } from 'dexie-react-hooks'
+import { useEffect, useState } from 'react'
 import { db } from './db/schema'
-import { DISCLAIMER } from './db/seed/reference'
+import { createPermitDraft } from './db/repo'
+import { TSTIPage1 } from './components/TSTIPage1'
+import { FormShell } from './components/FormShell'
 
-// Placeholder shell until the form components land. The disclaimer banner is permanent.
+// Module-level so StrictMode's double effect run cannot create two drafts.
+let opening: Promise<string> | undefined
+function openLatestDraft(): Promise<string> {
+  opening ??= (async () => {
+    const drafts = await db.permits.where('status').equals('draft').reverse().sortBy('updatedAt')
+    return drafts[0]?.id ?? (await createPermitDraft()).permitId
+  })()
+  return opening
+}
+
+// Temporary shell: opens the newest draft (or creates one) on TSTI Page 1.
+// Replaced by permit list + form navigation when the remaining forms land.
 export default function App() {
-  const ruleCount = useLiveQuery(() => db.siteRules.count(), [])
-  const permitCount = useLiveQuery(() => db.permits.count(), [])
+  const [permitId, setPermitId] = useState<string | null>(null)
 
-  return (
-    <div className="flex min-h-screen flex-col">
-      <div role="note" className="sticky top-0 z-50 bg-field-warn px-4 py-3 text-center text-base font-bold text-black">
-        {DISCLAIMER}
-      </div>
-      <main className="flex-1 p-4">
-        <h1 className="text-2xl font-bold">TSTI / JSA Permits</h1>
-        <p className="mt-2 text-lg">Site rules loaded: {ruleCount ?? '…'}</p>
-        <p className="text-lg">Local permits: {permitCount ?? '…'}</p>
-      </main>
-    </div>
-  )
+  useEffect(() => {
+    let cancelled = false
+    void openLatestDraft().then((id) => {
+      if (!cancelled) setPermitId(id)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (!permitId) return <FormShell title="TSTI Permits">Loading…</FormShell>
+  return <TSTIPage1 permitId={permitId} />
 }

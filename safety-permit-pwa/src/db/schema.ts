@@ -76,6 +76,11 @@ export class PermitDB extends Dexie {
       outbox: '++seq, table, recordId',
       meta: '&key',
     });
+
+    // v2: compound index so repeated saves of one record coalesce into one outbox entry.
+    this.version(2).stores({
+      outbox: '++seq, table, recordId, [table+recordId]',
+    });
   }
 }
 
